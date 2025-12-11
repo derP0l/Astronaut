@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <title>Astronaut – Minigame</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    body {
+      background: radial-gradient(circle at top, #1b1f3b, #040713);
+      color: #fff;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-start;
+      min-height: 100vh;
+      padding: 20px;
+      gap: 16px;
+    }
+
+    #gameWrapper {
+      position: relative;
+      border-radius: 16px;
+      overflow: hidden;
+      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.6);
+    }
+
+    canvas {
+      display: block;
+      background: radial-gradient(circle at 10% 20%, #222c4f, #050814);
+    }
+
+    #ui {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+
+    .btn {
+      border: none;
+      border-radius: 999px;
+      padding: 8px 16px;
+      font-size: 14px;
+      cursor: pointer;
+      font-weight: 600;
+      background: linear-gradient(135deg, #ff7a18, #af002d);
+      color: #fff;
+      box-shadow: 0 8px 20px rgba(0, 0, 0, 0.3);
+      transition: transform 0.1s ease, box-shadow 0.1s ease, opacity 0.15s ease;
+    }
+
+    .btn:active {
+      transform: translateY(1px) scale(0.98);
+      box-shadow: 0 4px 10px rgba(0, 0, 0, 0.4);
+    }
+
+    .scoreboard {
+      display: flex;
+      gap: 16px;
+      font-size: 14px;
+      opacity: 0.9;
+    }
+
+    .overlay {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: rgba(3, 6, 25, 0.82);
+      text-align: center;
+      padding: 20px;
+      backdrop-filter: blur(4px);
+    }
+
+    .overlay-inner {
+      max-width: 360px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 14px;
+    }
+
+    .overlay h2 {
+      font-size: 24px;
+      margin-bottom: 4px;
+    }
+
+    .overlay p {
+      font-size: 14px;
+      margin-bottom: 8px;
+      opacity: 0.9;
+    }
+
+    .overlay-cover {
+      width: 160px;
+      height: 160px;
+      object-fit: cover;
+      border-radius: 18px;
+      box-shadow: 0 16px 40px rgba(0, 0, 0, 0.85);
+      border: 2px solid rgba(255, 255, 255, 0.2);
+    }
+
+    /* Spotify-Player */
+    #audioControls {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      align-items: center;
+      justify-content: center;
+      font-size: 13px;
+      opacity: 0.95;
+      width: 100%;
+      max-width: 820px; /* breiter Player */
+    }
+
+    #audioControls-inner {
+      width: 100%;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Spotify-Player (einziges Element über dem Game) -->
+  <div id="audioControls">
+    <span>🎧 Hör „Astronaut“ auf Spotify während du spielst:</span>
+    <div id="audioControls-inner">
+      <iframe
+        data-testid="embed-iframe"
+        style="border-radius:12px"
+        src="https://open.spotify.com/embed/track/2iwal1LTMbyUsS7yKxMcB6?utm_source=generator"
+        width="100%"
+        height="152"
+        frameborder="0"
+        allowfullscreen=""
+        allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
+        loading="lazy">
+      </iframe>
+    </div>
+  </div>
+
+  <div id="gameWrapper">
+    <canvas id="gameCanvas" width="640" height="360"></canvas>
+
+    <!-- Start / Game-Over Overlay (Cover bleibt im Overlay) -->
+    <div id="overlay" class="overlay">
+      <div class="overlay-inner">
+        <img src="Astronaut.jpg" alt="Astronaut Albumcover" class="overlay-cover">
+        <h2>Astronaut bereit? 🚀</h2>
+        <p>
+          Drücke <strong>Leertaste</strong> oder klicke auf <strong>Start</strong>, um zu spielen.<br />
+          Bewege dich mit ⬆️⬇️, sammle Noten 🎵 (+10 Punkte) und vermeide Meteoriten ☄️!
+        </p>
+        <button id="startBtn" class="btn">Spiel starten</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="ui">
+    <div class="scoreboard">
+      <span>Punkte: <strong id="score">0</strong></span>
+      <span>Bestscore: <strong id="highscore">0</strong></span>
+      <span>Level: <strong id="level">1</strong></span>
+    </div>
+  </div>
+
+  <script>
+    // === Canvas Setup ===
+    const canvas = document.getElementById("gameCanvas");
+    const ctx = canvas.getContext("2d");
+
+    const overlay = document.getElementById("overlay");
+    const startBtn = document.getElementById("startBtn");
+
+    const scoreEl = document.getElementById("score");
+    const highscoreEl = document.getElementById("highscore");
+    const levelEl = document.getElementById("level");
+
+    // Highscore aus LocalStorage
+    let highscore = Number(localStorage.getItem("astronaut_highscore") || 0);
+    highscoreEl.textContent = highscore;
+
+    // === Game State ===
+    let lastTime = 0;
+    let gameRunning = false;
+
+    const keys = {
+      ArrowUp: false,
+      ArrowDown: false,
+    };
+
+    const GAME = {
+      score: 0,
+      level: 1,
+      speed: 180,
+      spawnTimer: 0,
+      spawnInterval: 900,
+    };
+
+    // === Astronaut Spieler ===
+    const player = {
+      x: 80,
+      y: canvas.height / 2,
+      width: 32,
+      height: 32,
+      vy: 0,
+      speed: 230,
+      color: "#ffdd55",
+    };
+
+    // === Objekte ===
+    const objects = [];
+
+    function createObject() {
+      const isNote = Math.random() < 0.6;
+      const size = isNote ? 18 : 26;
+      const y = 40 + Math.random() * (canvas.height - 80);
+      const speedBoost = GAME.level * 18;
+      objects.push({
+        x: canvas.width + size,
+        y,
+        width: size,
+        height: size,
+        vx: -(GAME.speed + speedBoost),
+        type: isNote ? "note" : "meteor",
+      });
+    }
+
+    // === Input Handling ===
+    window.addEventListener("keydown", (e) => {
+      if (e.code === "Space") {
+        if (!gameRunning) {
+          startGame();
+        }
+        e.preventDefault();
+      }
+      if (e.code === "ArrowUp" || e.code === "ArrowDown") {
+        keys[e.code] = true;
+      }
+    });
+
+    window.addEventListener("keyup", (e) => {
+      if (e.code === "ArrowUp" || e.code === "ArrowDown") {
+        keys[e.code] = false;
+      }
+    });
+
+    startBtn.addEventListener("click", () => {
+      if (!gameRunning) startGame();
+    });
+
+    // === Game Control ===
+    function startGame() {
+      gameRunning = true;
+      overlay.style.display = "none";
+
+      GAME.score = 0;
+      GAME.level = 1;
+      GAME.speed = 180;
+      GAME.spawnTimer = 0;
+      objects.length = 0;
+
+      player.y = canvas.height / 2;
+      player.vy = 0;
+
+      lastTime = performance.now();
+      requestAnimationFrame(loop);
+    }
+
+    function endGame() {
+      gameRunning = false;
+
+      if (GAME.score > highscore) {
+        highscore = GAME.score;
+        localStorage.setItem("astronaut_highscore", String(highscore));
+        highscoreEl.textContent = highscore;
+      }
+
+      overlay.innerHTML = `
+        <div class="overlay-inner">
+          <img src="Astronaut.jpg" alt="Astronaut Albumcover" class="overlay-cover">
+          <h2>Game Over 💥</h2>
+          <p>Du hast <strong>${GAME.score}</strong> Punkte erreicht.<br/>
+          Höchste Punktzahl: <strong>${highscore}</strong></p>
+          <button id="startBtnInner" class="btn">Nochmal fliegen</button>
+        </div>
+      `;
+      overlay.style.display = "flex";
+
+      const innerBtn = document.getElementById("startBtnInner");
+      innerBtn.addEventListener("click", () => {
+        if (!gameRunning) startGame();
+      });
+    }
+
+    function isColliding(a, b) {
+      return (
+        a.x < b.x + b.width &&
+        a.x + a.width > b.x &&
+        a.y < b.y + b.height &&
+        a.y + a.height > b.y
+      );
+    }
+
+    // === Haupt-Game-Loop ===
+    function loop(timestamp) {
+      if (!gameRunning) return;
+      const delta = (timestamp - lastTime) / 1000;
+      lastTime = timestamp;
+
+      update(delta);
+      draw();
+
+      if (gameRunning) {
+        requestAnimationFrame(loop);
+      }
+    }
+
+    function update(delta) {
+      if (keys.ArrowUp) {
+        player.y -= player.speed * delta;
+      } else if (keys.ArrowDown) {
+        player.y += player.speed * delta;
+      }
+
+      const margin = 10;
+      player.y = Math.max(margin, Math.min(canvas.height - player.height - margin, player.y));
+
+      GAME.spawnTimer += delta * 1000;
+      if (GAME.spawnTimer >= GAME.spawnInterval) {
+        GAME.spawnTimer = 0;
+        createObject();
+      }
+
+      for (let i = objects.length - 1; i >= 0; i--) {
+        const obj = objects[i];
+        obj.x += obj.vx * delta;
+
+        if (obj.x + obj.width < -50) {
+          objects.splice(i, 1);
+          continue;
+        }
+
+        if (isColliding(player, obj)) {
+          if (obj.type === "note") {
+            GAME.score += 10;
+            scoreEl.textContent = GAME.score;
+
+            const newLevel = Math.floor(GAME.score / 100) + 1;
+            if (newLevel !== GAME.level) {
+              GAME.level = newLevel;
+              levelEl.textContent = newLevel;
+              GAME.spawnInterval = Math.max(350, 900 - GAME.level * 80);
+            }
+
+            objects.splice(i, 1);
+          } else if (obj.type === "meteor") {
+            endGame();
+            return;
+          }
+        }
+      }
+    }
+
+    // === Zeichnen ===
+    function drawStars() {
+      for (let i = 0; i < 40; i++) {
+        const x = Math.random() * canvas.width;
+        const y = Math.random() * canvas.height;
+        const r = Math.random() * 1.8;
+        ctx.globalAlpha = Math.random() * 0.7 + 0.3;
+        ctx.beginPath();
+        ctx.arc(x, y, r, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    function drawPlayer() {
+      ctx.fillStyle = player.color;
+      ctx.fillRect(player.x, player.y, player.width, player.height);
+
+      ctx.fillStyle = "#2b2f55";
+      ctx.beginPath();
+      ctx.arc(
+        player.x + player.width / 2,
+        player.y + player.height / 2 - 6,
+        player.width / 3,
+        0,
+        Math.PI * 2
+      );
+      ctx.fill();
+
+      ctx.fillStyle = "#ffb347";
+      ctx.fillRect(player.x - 10, player.y + 6, 8, player.height - 12);
+
+      if (gameRunning) {
+        ctx.fillStyle = "#ff6b6b";
+        ctx.beginPath();
+        ctx.moveTo(player.x - 10, player.y + player.height / 2);
+        ctx.lineTo(player.x - 20, player.y + player.height / 2 - 4);
+        ctx.lineTo(player.x - 20, player.y + player.height / 2 + 4);
+        ctx.closePath();
+        ctx.fill();
+      }
+    }
+
+    function drawObjects() {
+      objects.forEach((obj) => {
+        if (obj.type === "note") {
+          ctx.save();
+          ctx.translate(obj.x + obj.width / 2, obj.y + obj.height / 2);
+          ctx.scale(0.85, 0.85);
+          ctx.fillStyle = "#7dffb3";
+          ctx.beginPath();
+          ctx.arc(-4, -4, 5, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.fillRect(0, -16, 4, 18);
+          ctx.beginPath();
+          ctx.moveTo(4, -16);
+          ctx.lineTo(14, -10);
+          ctx.lineTo(4, -10);
+          ctx.closePath();
+          ctx.fill();
+          ctx.restore();
+        } else {
+          ctx.save();
+          ctx.translate(obj.x + obj.width / 2, obj.y + obj.height / 2);
+          ctx.fillStyle = "#c44f3b";
+          ctx.beginPath();
+          ctx.moveTo(-obj.width / 2, -obj.height / 2);
+          ctx.lineTo(obj.width / 2, -obj.height / 3);
+          ctx.lineTo(obj.width / 3, obj.height / 2);
+          ctx.lineTo(-obj.width / 2, obj.height / 3);
+          ctx.closePath();
+          ctx.fill();
+          ctx.restore();
+        }
+      });
+    }
+
+    function drawHUD() {
+      const gradient = ctx.createLinearGradient(0, 0, canvas.width, 0);
+      gradient.addColorStop(0, "rgba(255, 255, 255, 0.12)");
+      gradient.addColorStop(0.9, "rgba(255, 255, 255, 0)");
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
+
+    function draw() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = "#ffffff";
+      drawStars();
+      drawObjects();
+      drawPlayer();
+      drawHUD();
+    }
+
+    // Initial einmal zeichnen
+    draw();
+  </script>
+</body>
+</html>
